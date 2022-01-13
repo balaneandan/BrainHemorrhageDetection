@@ -394,6 +394,161 @@ void testMouseClick()
 }
 
 
+void imreconstruct(Mat reference, Mat marker) {
+	Mat dst;
+	/*Inputs are two images : ImReference and ImMarker, with marker <= reference
+		Intermediate image : ImRec
+		Output image : ImResult
+		Copy ImMarker into ImRec
+		copy ImRec into ImResult
+		ImDilated = Dilation(ImResult)
+		ImRec = Minimum(ImDilated, ImReference)
+		If ImRec != ImResult then return to step 5.*/
+}
+
+Mat openingByReconstruction(Mat src) {
+	
+	Mat dst;
+	Mat element = getStructuringElement(MORPH_CROSS, Size(5, 5));
+	erode(src, dst, element, Point(-1, -1), 2);
+	dilate(src, dst, element, Point(-1, -1), 2);
+
+	return dst;
+}
+
+Mat closingByReconstruction(Mat src) {
+
+	Mat dst;
+	Mat element = getStructuringElement(MORPH_CROSS, Size(5, 5));
+	dilate(src, dst, element, Point(-1, -1), 2);
+	erode(src, dst, element, Point(-1, -1), 2);
+
+	return dst;
+}
+
+void non_maxima_suppression(const cv::Mat& image, cv::Mat& mask, bool remove_plateaus) {
+	// find pixels that are equal to the local neighborhood not maximum (including 'plateaus')
+	cv::dilate(image, mask, cv::Mat());
+	cv::compare(image, mask, mask, cv::CMP_GE);
+
+	// optionally filter out pixels that are equal to the local minimum ('plateaus')
+	if (remove_plateaus) {
+		cv::Mat non_plateau_mask;
+		cv::erode(image, non_plateau_mask, cv::Mat());
+		cv::compare(image, non_plateau_mask, non_plateau_mask, cv::CMP_GT);
+		cv::bitwise_and(mask, non_plateau_mask, mask);
+	}
+
+}
+
+class WatershedSegmenter {
+private:
+	cv::Mat markers;
+public:
+	void setMarkers(cv::Mat& markerImage)
+	{
+		markerImage.convertTo(markers, CV_32S);
+	}
+
+	cv::Mat process(cv::Mat& image)
+	{
+		cv::watershed(image, markers);
+		markers.convertTo(markers, CV_8U);
+		return markers;
+	}
+};
+
+void watershedAlgo(Mat& src, Mat& dst) {
+	cv::Mat markers(src.size(), CV_8U, cv::Scalar(-1));
+	//Rect(topleftcornerX, topleftcornerY, width, height);
+	//top rectangle
+	markers(Rect(0, 0, src.cols, 5)) = Scalar::all(1);
+	//bottom rectangle
+	markers(Rect(0, src.rows - 5, src.cols, 5)) = Scalar::all(1);
+	//left rectangle
+	markers(Rect(0, 0, 5, src.rows)) = Scalar::all(1);
+	//right rectangle
+	markers(Rect(src.cols - 5, 0, 5, src.rows)) = Scalar::all(1);
+	//centre rectangle
+	int centreW = src.cols / 4;
+	int centreH = src.rows / 4;
+	markers(Rect((src.cols / 2) - (centreW / 2), (src.rows / 2) - (centreH / 2), centreW, centreH)) = Scalar::all(2);
+	markers.convertTo(markers, CV_BGR2GRAY);
+	imshow("markers", markers);
+
+	//Create watershed segmentation object
+	WatershedSegmenter segmenter;
+	segmenter.setMarkers(markers);
+	cv::Mat wshedMask = segmenter.process(src);
+	cv::Mat mask;
+	convertScaleAbs(wshedMask, mask, 1, 0);
+	double thresh = threshold(mask, mask, 1, 255, THRESH_BINARY);
+	bitwise_and(src, src, dst, mask);
+	dst.convertTo(dst, CV_8U);
+
+	//imshow("final_result", dst);
+}
+void brainHemorrhageDetection() {
+	char fname[MAX_PATH];
+	while (openFileDlg(fname))
+	{
+		Mat src, gray, resize, blur, sobelxy, canny, morph_open, morph_close, dst, dst2;
+		src = imread(fname);
+
+		#pragma region Pre-processing
+		// convert to grayscale
+		cvtColor(src, gray, CV_BGR2GRAY);
+		// resize cu interpolare
+		resizeImg(src, resize, 256, true);
+		// blur pt detectare mai buna a marginilor (reduce zgomote)
+		GaussianBlur(resize, blur, Size(3, 3), 0);
+		// sobel edge detection
+		Sobel(blur, sobelxy, CV_64F, 1, 1, 5);
+		Canny(blur, canny, 170, 200, 3, false);
+		#pragma endregion
+
+		#pragma region Morphological Operations
+		//reconstruct- implementez echivalent la imreconstruct din matlab
+		// opening by reconstruction
+		morph_open = openingByReconstruction(blur);
+		// closing by reconstruction
+		morph_close = closingByReconstruction(morph_open);
+		// complement image
+		Mat comlpemented_image;
+		bitwise_not(morph_close, comlpemented_image);
+		// calculate regional maxima
+		non_maxima_suppression(morph_open, canny, false);
+
+		// superimpose the image
+
+		#pragma endregion
+		
+		#pragma region Segmentation
+		
+		// Create markers image
+		watershedAlgo(morph_open, dst);
+		//bitwise_not(dst, dst);
+		watershedAlgo(dst, dst2);
+		//watershedAlgo(dst, dst);
+		#pragma endregion
+
+		#pragma region Results
+		imshow("input image", src);
+		imshow("to grayscale", gray);
+		imshow("resized image", resize);
+		imshow("Sobel XY ", sobelxy);
+		imshow("Canny edge detection", canny);
+		imshow("complement image", comlpemented_image);
+		imshow("morph_open", morph_open);
+		imshow("result", dst);
+		imshow("result2", dst2);
+		#pragma endregion
+
+		waitKey();
+		destroyAllWindows();
+	}
+}
+
 int main()
 {
 	int op;
@@ -411,6 +566,7 @@ int main()
 		printf(" 7 - Edges in a video sequence\n");
 		printf(" 8 - Snap frame from live video\n");
 		printf(" 9 - Mouse callback demo\n");
+		printf(" 10 - Proiect");
 		printf(" 0 - Exit\n\n");
 		printf("Option: ");
 		scanf("%d",&op);
@@ -443,6 +599,9 @@ int main()
 				break;
 			case 9:
 				testMouseClick();
+				break;
+			case 10:
+				brainHemorrhageDetection();
 				break;
 		}
 	}
